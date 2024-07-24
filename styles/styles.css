@@ -213,15 +213,15 @@ svg * {
 }
 
 @media (min-width: 768px) {
-  .visually-mobile {
+  .visible-mobile {
     display: none !important;
   }
 }
 
 body {
+  font-size: clamp(16px, 1.25vw, 18px);
   font-family: var(--font-family-base);
   font-weight: 400;
-  font-size: 18px;
   line-height: 1.28;
   color: var(--color-dark);
 }

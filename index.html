@@ -14,7 +14,6 @@
       visibility: hidden;
       opacity: 0;
       transition: opacity 0.3s ease;
-      /* Плавное появление */
     }
 
     /* Показываем тело страницы, когда проверка завершена */
@@ -42,7 +41,8 @@
 
     function decodeToken(token) {
       try {
-        const payload = JSON.parse(atob(token.split('.')[1])); // Раскодируем payload из JWT
+        // Раскодируем payload из JWT
+        const payload = JSON.parse(atob(token.split('.')[1]));
         return payload;
       } catch (error) {
         console.error('Ошибка расшифровки токена:', error);
@@ -50,15 +50,13 @@
       }
     }
 
-    function isAuthenticated() {
-      const token = getAuthToken();
-      if (!token) return false;
-
-      const decoded = decodeToken(token);
-      if (!decoded) return false;
-
-      const currentTime = Date.now() / 1000;
-      return decoded.exp && decoded.exp > currentTime;
+    /**
+     * Функция для проверки, действителен ли токен по времени (сравнение поля exp)
+     */
+    function isTokenValid(decodedToken) {
+      if (!decodedToken || !decodedToken.exp) return false;
+      const currentTime = Date.now() / 1000;  // время в секундах
+      return decodedToken.exp > currentTime;
     }
 
     /**
@@ -72,15 +70,13 @@
 
         // Обработчик сообщений postMessage
         function messageHandler(event) {
-          const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:5500']; // Добавьте ваши доверенные источники
-
+          const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:5500'];
           if (!allowedOrigins.includes(event.origin)) {
             console.warn('Получено сообщение от недоверенного источника:', event.origin);
             return;
           }
 
           const { token } = event.data;
-
           if (token) {
             setAuthToken(token);
             console.log('Токен успешно получен и сохранен:', token);
@@ -90,10 +86,8 @@
           }
         }
 
-        // Добавляем обработчик сообщений
         window.addEventListener('message', messageHandler);
 
-        // Таймер на случай, если токен не будет получен
         const timer = setTimeout(() => {
           if (!tokenReceived) {
             console.warn('Токен не получен в течение заданного времени');
@@ -102,7 +96,6 @@
           }
         }, timeout);
 
-        // Функция очистки обработчиков и таймеров
         function cleanup() {
           window.removeEventListener('message', messageHandler);
           clearTimeout(timer);
@@ -119,12 +112,11 @@
 
         if (!token) {
           console.log('Токен не найден в LocalStorage. Ожидание получения токена через postMessage...');
-          // Ожидаем получения токена через postMessage
           try {
             token = await waitForToken(5000); // Ожидание до 5 секунд
           } catch (error) {
             console.error(error);
-            window.location.href = '/login'; // Перенаправляем на страницу входа
+            window.location.href = '/login';
             return;
           }
         } else {
@@ -133,9 +125,17 @@
 
         // Расшифровываем токен
         const decodedToken = decodeToken(token);
-
         if (!decodedToken || !decodedToken.id) {
           console.warn('Некорректный токен. Перенаправляем на страницу входа.');
+          removeAuthToken();
+          window.location.href = '/login';
+          return;
+        }
+
+        // Явная проверка срока действия токена
+        if (!isTokenValid(decodedToken)) {
+          console.warn('Токен просрочен.');
+          removeAuthToken();
           window.location.href = '/login';
           return;
         }
@@ -146,7 +146,7 @@
         const response = await fetch(`http://localhost:1337/api/ssos/me`, {
           method: 'GET',
           headers: {
-            'Authorization': `Bearer ${token}`, // Передаём токен в заголовке
+            'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
         });
@@ -163,10 +163,10 @@
 
           // Проверяем роль пользователя
           if (user.id === decodedToken.id && user.user_roles.some(role => role.name === 'glav-bobr')) {
-            document.body.classList.add('visible'); // Показываем страницу
+            document.body.classList.add('visible');
           } else {
             console.warn('У пользователя нет необходимой роли. Перенаправляем.');
-            window.location.href = '/no-access'; // Перенаправляем на страницу ошибки
+            window.location.href = '/no-access';
           }
         } else {
           console.warn('Ошибка получения данных пользователя через API. Перенаправляем.');
@@ -185,10 +185,8 @@
       if (event.key === 'auth_jwt') {
         console.log('auth_jwt изменен в другой вкладке:', event.newValue);
         if (!event.newValue) {
-          // Токен был удален, перенаправляем на страницу входа
           window.location.href = '/login';
         } else {
-          // Токен был обновлен, проверяем его валидность
           checkAndShowPage();
         }
       }
@@ -212,9 +210,6 @@
       }
     });
 
-    /**
-     * Запуск проверки при загрузке страницы
-     */
     window.addEventListener('DOMContentLoaded', checkAndShowPage);
   </script>
 

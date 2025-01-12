@@ -12,27 +12,31 @@
     /* Скрываем тело страницы по умолчанию */
     body {
       padding-top: 120px;
-      visibility: hidden;
-      opacity: 0;
-      transition: opacity 0.3s ease;
     }
 
-    /* Показываем тело страницы, когда проверка завершена */
-    body.visible {
-      visibility: visible;
-      opacity: 1;
-    }
-
-    .header {
-      /* Высота хедера */
+    /* Стиль для экрана проверки доступа */
+    #access-message {
       position: fixed;
-      /* Фиксированный хедер */
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.8);
+      font-size: 24px;
+      z-index: 1000;
+    }
+
+    /* Пример основных стилей, которые применяются к динамично загружаемому контенту */
+    .header {
+      position: fixed;
       top: 0;
       width: 100%;
       z-index: 1;
     }
 
-    /* Стили для видео */
     .background-video {
       position: relative;
       height: calc(100dvh - 120px);
@@ -55,7 +59,36 @@
   </style>
 
 
-  <script>
+  <script defer>
+    // ===== ФУНКЦИИ УПРАВЛЕНИЯ ТОКЕНОМ =====
+    function setAuthToken(token) {
+      localStorage.setItem('auth_jwt', token);
+    }
+
+    function getAuthToken() {
+      return localStorage.getItem('auth_jwt');
+    }
+
+    function removeAuthToken() {
+      localStorage.removeItem('auth_jwt');
+    }
+
+    function decodeToken(token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        return payload;
+      } catch (error) {
+        console.error('Ошибка расшифровки токена:', error);
+        return null;
+      }
+    }
+
+    function isTokenValid(decodedToken) {
+      if (!decodedToken || !decodedToken.exp) return false;
+      const currentTime = Date.now() / 1000;
+      return decodedToken.exp > currentTime;
+    }
+
     // Функция, которая заменяет содержимое страницы на сообщение "Нет доступа"
     function showNoAccess() {
       document.body.innerHTML = `
@@ -70,29 +103,12 @@
       document.body.style.opacity = 1;
     }
 
-    // ===== ФУНКЦИИ УПРАВЛЕНИЯ ТОКЕНОМ =====
-    function setAuthToken(token) {
-      localStorage.setItem('auth_jwt', token);
-    }
-    function getAuthToken() {
-      return localStorage.getItem('auth_jwt');
-    }
-    function removeAuthToken() {
-      localStorage.removeItem('auth_jwt');
-    }
-    function decodeToken(token) {
-      try {
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        return payload;
-      } catch (error) {
-        console.error('Ошибка расшифровки токена:', error);
-        return null;
+    // Функция для удаления оверлея с сообщением «Проверка доступа...»
+    function removeAccessMessage() {
+      const accessMsg = document.getElementById('access-message');
+      if (accessMsg) {
+        accessMsg.remove();
       }
-    }
-    function isTokenValid(decodedToken) {
-      if (!decodedToken || !decodedToken.exp) return false;
-      const currentTime = Date.now() / 1000;
-      return decodedToken.exp > currentTime;
     }
 
     // ===== ОДИН ГЛОБАЛЬНЫЙ ОБРАБОТЧИК postMessage =====
@@ -108,7 +124,7 @@
       if (token) {
         setAuthToken(token);
         console.log('[Global message] Токен сохранён:', token);
-        checkAndShowPage(); // пересобрать логику доступа
+        checkAndShowPage(); // Перепроверяем доступ
       }
     });
 
@@ -117,23 +133,17 @@
     // проверяя localStorage каждые 500 мс
     function waitForInitialToken(timeout = 5000) {
       return new Promise((resolve, reject) => {
-        let tokenFound = false;
         const start = Date.now();
-
         const interval = setInterval(() => {
           const token = getAuthToken();
           if (token) {
-            tokenFound = true;
             clearInterval(interval);
             resolve(token);
-          } else {
-            // Если прошло > timeout мс, завершаем без успеха
-            if (Date.now() - start > timeout) {
-              clearInterval(interval);
-              reject('Токен не получен в течение заданного времени');
-            }
+          } else if (Date.now() - start > timeout) {
+            clearInterval(interval);
+            reject('Токен не получен в течение заданного времени');
           }
-        }, 500); // проверяем каждые полсекунды
+        }, 500);
       });
     }
 
@@ -165,14 +175,14 @@
           return;
         }
         if (!isTokenValid(decodedToken)) {
-          console.warn('Токен просрочен. Удаляем и редирект на http://localhost:3000/login');
+          console.warn('Токен просрочен.');
           removeAuthToken();
           window.location.href = 'http://localhost:3000/login';
           return;
         }
 
         // (3) Делаем запрос на сервер для проверки пользователя
-        const response = await fetch(`http://localhost:1337/api/ssos/:id`, {
+        const response = await fetch(`http://localhost:1337/api/ssos/me`, {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -192,14 +202,13 @@
 
           // (4) Проверяем роль
           if (user.id === decodedToken.id && user.user_roles.some((r) => r.name === 'glav-bobr')) {
-            // Показываем страницу
-            document.body.classList.add('visible');
+            loadMainContent();
           } else {
             console.warn('Нет требуемой роли. Показываем сообщение "Нет доступа".');
             showNoAccess();
           }
         } else {
-          console.warn('response.ok=false. Редирект http://localhost:3000/login');
+          console.warn('Ошибка ответа API.');
           window.location.href = 'http://localhost:3000/login';
         }
       } catch (error) {
@@ -222,49 +231,63 @@
 
     // ===== ПРИ ЗАГРУЗКЕ СТРАНИЦЫ =====
     window.addEventListener('DOMContentLoaded', checkAndShowPage);
+
+    // Функция, которая динамически добавляет основной контент в <body>
+    function loadMainContent() {
+      console.log('loadMainContent вызывается');
+      if (document.getElementById('main-content')) {
+        console.log('Контент уже существует, повторное добавление не требуется.');
+        return;
+      }
+      // Удаляем экран проверки доступа
+      removeAccessMessage();
+
+      const mainContentHtml = `
+        <div id="main-content" class="hidden-content visible">
+          <header class="header">
+            <div class="header__inner container">
+              <a class="header__logo logo" href="/">
+                <img src="./images/logo.svg" alt="Positivus" width="220" height="36" loading="lazy" />
+              </a>
+              <nav class="header__menu hidden-mobile">
+                <ul class="header__menu-list">
+                  <li class="header__menu-item"><a class="header__menu-link" href="/">About us</a></li>
+                  <li class="header__menu-item"><a class="header__menu-link" href="/">Services</a></li>
+                  <li class="header__menu-item"><a class="header__menu-link" href="/">Use Cases</a></li>
+                  <li class="header__menu-item"><a class="header__menu-link" href="/">Pricing</a></li>
+                  <li class="header__menu-item"><a class="header__menu-link" href="/">Blog</a></li>
+                </ul>
+              </nav>
+              <button class="header__button button button--transparent hidden-mobile" type="button">
+                Request a quote
+              </button>
+              <button class="button__burger-menu burger-button visible-mobile" type="button"
+                      onclick="mobileOverlay.showModal()">
+                <span class="visually-hidden">Open navigation menu</span>
+              </button>
+            </div>
+          </header>
+          <div class="video">
+            <video class="background-video" controls autoplay loop playsinline muted>
+              <source src="./video/kurwa.mp4" type="video/mp4" />
+              Ваш браузер не поддерживает видео.
+            </video>
+          </div>
+        </div>
+      `;
+
+      // Добавляем основной контент в конец <body>
+      document.body.insertAdjacentHTML('beforeend', mainContentHtml);
+    }
   </script>
 </head>
 
 <body>
-  <header class="header">
-    <div class="header__inner container">
-      <a class="header__logo logo" href="/">
-        <img src="./images/logo.svg" alt="Positivus" width="220" height="36" loading="lazy" />
-      </a>
-      <nav class="header__menu hidden-mobile">
-        <ul class="header__menu-list">
-          <li class="header__menu-item">
-            <a class="header__menu-link" href="/">About us</a>
-          </li>
-          <li class="header__menu-item">
-            <a class="header__menu-link" href="/">Services</a>
-          </li>
-          <li class="header__menu-item">
-            <a class="header__menu-link" href="/">Use Cases</a>
-          </li>
-          <li class="header__menu-item">
-            <a class="header__menu-link" href="/">Pricing</a>
-          </li>
-          <li class="header__menu-item">
-            <a class="header__menu-link" href="/">Blog</a>
-          </li>
-        </ul>
-      </nav>
-      <button class="header__button button button--transparent hidden-mobile" type="button">
-        Request a quote
-      </button>
-      <button class="button__burger-menu burger-button visible-mobile" type="button"
-              onclick="mobileOverlay.showModal()">
-        <span class="visually-hidden">Open navigation menu</span>
-      </button>
-    </div>
-  </header>
-  <div class="video">
-    <video class="background-video" controls autoplay loop playsinline muted>
-      <source src="./video/kurwa.mp4" type="video/mp4" />
-      Ваш браузер не поддерживает видео.
-    </video>
+  <!-- Экран проверки доступа, изначально видимый -->
+  <div id="access-message">
+    Проверка доступа...
   </div>
+  <!-- Здесь изначально ничего больше нет, основной контент будет добавлен динамически -->
 </body>
 
 </html>

@@ -11,6 +11,7 @@
   <style>
     /* Скрываем тело страницы по умолчанию */
     body {
+      padding-top: 120px;
       visibility: hidden;
       opacity: 0;
       transition: opacity 0.3s ease;
@@ -21,27 +22,66 @@
       visibility: visible;
       opacity: 1;
     }
+
+    .header {
+      /* Высота хедера */
+      position: fixed;
+      /* Фиксированный хедер */
+      top: 0;
+      width: 100%;
+      z-index: 1;
+    }
+
+    /* Стили для видео */
+    .background-video {
+      position: relative;
+      height: calc(100dvh - 120px);
+      object-fit: contain;
+    }
+
+    .video {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .no-access {
+      padding: 2em;
+      max-width: 500px;
+      margin: 50px auto;
+      border: 1px solid #f00;
+      text-align: center;
+    }
   </style>
 
+
   <script>
-    /**
-     * Управление токеном в localStorage
-     */
+    // Функция, которая заменяет содержимое страницы на сообщение "Нет доступа"
+    function showNoAccess() {
+      document.body.innerHTML = `
+        <div class="no-access">
+          <h1>Доступ запрещён</h1>
+          <p>У вас недостаточно прав для доступа к этой странице.</p>
+          <a href="http://localhost:3000/" rel="noopener noreferrer">Вернуться на главную</a>
+        </div>
+      `;
+      // Делает страницу видимой
+      document.body.style.visibility = 'visible';
+      document.body.style.opacity = 1;
+    }
+
+    // ===== ФУНКЦИИ УПРАВЛЕНИЯ ТОКЕНОМ =====
     function setAuthToken(token) {
       localStorage.setItem('auth_jwt', token);
     }
-
     function getAuthToken() {
       return localStorage.getItem('auth_jwt');
     }
-
     function removeAuthToken() {
       localStorage.removeItem('auth_jwt');
     }
-
     function decodeToken(token) {
       try {
-        // Раскодируем payload из JWT
         const payload = JSON.parse(atob(token.split('.')[1]));
         return payload;
       } catch (error) {
@@ -49,170 +89,140 @@
         return null;
       }
     }
-
-    /**
-     * Функция для проверки, действителен ли токен по времени (сравнение поля exp)
-     */
     function isTokenValid(decodedToken) {
       if (!decodedToken || !decodedToken.exp) return false;
-      const currentTime = Date.now() / 1000;  // время в секундах
+      const currentTime = Date.now() / 1000;
       return decodedToken.exp > currentTime;
     }
 
-    /**
-     * Функция ожидания получения токена через postMessage
-     * @param {number} timeout - Максимальное время ожидания в миллисекундах
-     * @returns {Promise<string>} - Возвращает токен или отклоняет промис
-     */
-    function waitForToken(timeout = 5000) {
-      return new Promise((resolve, reject) => {
-        let tokenReceived = false;
-
-        // Обработчик сообщений postMessage
-        function messageHandler(event) {
-          const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:5500'];
-          if (!allowedOrigins.includes(event.origin)) {
-            console.warn('Получено сообщение от недоверенного источника:', event.origin);
-            return;
-          }
-
-          const { token } = event.data;
-          if (token) {
-            setAuthToken(token);
-            console.log('Токен успешно получен и сохранен:', token);
-            tokenReceived = true;
-            cleanup();
-            resolve(token); // Завершаем ожидание
-          }
-        }
-
-        window.addEventListener('message', messageHandler);
-
-        const timer = setTimeout(() => {
-          if (!tokenReceived) {
-            console.warn('Токен не получен в течение заданного времени');
-            cleanup();
-            reject('Токен не получен в течение заданного времени');
-          }
-        }, timeout);
-
-        function cleanup() {
-          window.removeEventListener('message', messageHandler);
-          clearTimeout(timer);
-        }
-      });
-    }
-
-    /**
-     * Основная функция проверки и отображения страницы
-     */
-    async function checkAndShowPage() {
-      try {
-        let token = getAuthToken();
-
-        if (!token) {
-          console.log('Токен не найден в LocalStorage. Ожидание получения токена через postMessage...');
-          try {
-            token = await waitForToken(5000); // Ожидание до 5 секунд
-          } catch (error) {
-            console.error(error);
-            window.location.href = '/login';
-            return;
-          }
-        } else {
-          console.log('Токен найден в LocalStorage:', token);
-        }
-
-        // Расшифровываем токен
-        const decodedToken = decodeToken(token);
-        if (!decodedToken || !decodedToken.id) {
-          console.warn('Некорректный токен. Перенаправляем на страницу входа.');
-          removeAuthToken();
-          window.location.href = '/login';
-          return;
-        }
-
-        // Явная проверка срока действия токена
-        if (!isTokenValid(decodedToken)) {
-          console.warn('Токен просрочен.');
-          removeAuthToken();
-          window.location.href = '/login';
-          return;
-        }
-
-        console.log('Расшифрованный токен:', decodedToken);
-
-        // Проверяем данные пользователя через API
-        const response = await fetch(`http://localhost:1337/api/ssos/me`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (response.ok) {
-          const { user, newToken } = await response.json();
-          console.log('Ответ SSO API:', user);
-
-          // Перезаписываем токен, если сервер вернул новый
-          if (newToken) {
-            console.log('Получен новый токен. Обновляем в LocalStorage:', newToken);
-            setAuthToken(newToken);
-          }
-
-          // Проверяем роль пользователя
-          if (user.id === decodedToken.id && user.user_roles.some(role => role.name === 'glav-bobr')) {
-            document.body.classList.add('visible');
-          } else {
-            console.warn('У пользователя нет необходимой роли. Перенаправляем.');
-            window.location.href = '/no-access';
-          }
-        } else {
-          console.warn('Ошибка получения данных пользователя через API. Перенаправляем.');
-          window.location.href = '/login';
-        }
-      } catch (error) {
-        console.error('Ошибка проверки токена или данных пользователя:', error);
-        window.location.href = '/login';
-      }
-    }
-
-    /**
-     * Обработка изменений в localStorage для синхронизации токена между вкладками
-     */
-    window.addEventListener('storage', (event) => {
-      if (event.key === 'auth_jwt') {
-        console.log('auth_jwt изменен в другой вкладке:', event.newValue);
-        if (!event.newValue) {
-          window.location.href = '/login';
-        } else {
-          checkAndShowPage();
-        }
-      }
-    });
-
-    /**
-     * Обработка новых токенов через postMessage
-     */
+    // ===== ОДИН ГЛОБАЛЬНЫЙ ОБРАБОТЧИК postMessage =====
+    // При любом postMessage с { token } мы записываем токен в localStorage
+    // и делаем повторную проверку (checkAndShowPage)
     window.addEventListener('message', (event) => {
       const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:5500'];
       if (!allowedOrigins.includes(event.origin)) {
         console.warn('Получено сообщение от недоверенного источника:', event.origin);
         return;
       }
-
       const { token } = event.data;
       if (token) {
         setAuthToken(token);
-        console.log('Получен новый токен через postMessage:', token);
-        checkAndShowPage();
+        console.log('[Global message] Токен сохранён:', token);
+        checkAndShowPage(); // пересобрать логику доступа
       }
     });
 
+    // ===== ФУНКЦИЯ ПУЛЛИНГА ДЛЯ ПЕРВОГО ПОЛУЧЕНИЯ ТОКЕНА =====
+    // Если при загрузке страницы токена нет, подождём до 5 секунд,
+    // проверяя localStorage каждые 500 мс
+    function waitForInitialToken(timeout = 5000) {
+      return new Promise((resolve, reject) => {
+        let tokenFound = false;
+        const start = Date.now();
+
+        const interval = setInterval(() => {
+          const token = getAuthToken();
+          if (token) {
+            tokenFound = true;
+            clearInterval(interval);
+            resolve(token);
+          } else {
+            // Если прошло > timeout мс, завершаем без успеха
+            if (Date.now() - start > timeout) {
+              clearInterval(interval);
+              reject('Токен не получен в течение заданного времени');
+            }
+          }
+        }, 500); // проверяем каждые полсекунды
+      });
+    }
+
+    // ===== ОСНОВНАЯ ФУНКЦИЯ ПРОВЕРКИ =====
+    async function checkAndShowPage() {
+      try {
+        let token = getAuthToken();
+
+        // (1) Если токена нет в localStorage, пробуем дождаться его 5 секунд
+        if (!token) {
+          console.log('Токен не найден в LocalStorage. Ожидание до 5 секунд...');
+          try {
+            token = await waitForInitialToken(5000);
+          } catch (err) {
+            console.warn(err);
+            window.location.href = 'http://localhost:3000/login';
+            return;
+          }
+        }
+
+        console.log('Токен (после ожидания) в localStorage:', token);
+
+        // (2) Проверяем валидность токена
+        const decodedToken = decodeToken(token);
+        if (!decodedToken || !decodedToken.id) {
+          console.warn('Некорректный токен (нет поля id). Удаляем и редирект на http://localhost:3000/login');
+          removeAuthToken();
+          window.location.href = 'http://localhost:3000/login';
+          return;
+        }
+        if (!isTokenValid(decodedToken)) {
+          console.warn('Токен просрочен. Удаляем и редирект на http://localhost:3000/login');
+          removeAuthToken();
+          window.location.href = 'http://localhost:3000/login';
+          return;
+        }
+
+        // (3) Делаем запрос на сервер для проверки пользователя
+        const response = await fetch(`http://localhost:1337/api/ssos/:id`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (response.ok) {
+          const { user, newToken } = await response.json();
+          console.log('Ответ SSO API /me:', user);
+
+          // Если сервер вернул обновлённый токен — сохраним
+          if (newToken) {
+            console.log('Сервер прислал новый токен:', newToken);
+            setAuthToken(newToken);
+          }
+
+          // (4) Проверяем роль
+          if (user.id === decodedToken.id && user.user_roles.some((r) => r.name === 'glav-bobr')) {
+            // Показываем страницу
+            document.body.classList.add('visible');
+          } else {
+            console.warn('Нет требуемой роли. Показываем сообщение "Нет доступа".');
+            showNoAccess();
+          }
+        } else {
+          console.warn('response.ok=false. Редирект http://localhost:3000/login');
+          window.location.href = 'http://localhost:3000/login';
+        }
+      } catch (error) {
+        console.error('Ошибка проверки токена:', error);
+        window.location.href = 'http://localhost:3000/login';
+      }
+    }
+
+    // ===== СИНХРОНИЗАЦИЯ МЕЖДУ ВКЛАДКАМИ =====
+    window.addEventListener('storage', (event) => {
+      if (event.key === 'auth_jwt') {
+        console.log('auth_jwt изменён в другой вкладке:', event.newValue);
+        if (!event.newValue) {
+          window.location.href = 'http://localhost:3000/login';
+        } else {
+          checkAndShowPage();
+        }
+      }
+    });
+
+    // ===== ПРИ ЗАГРУЗКЕ СТРАНИЦЫ =====
     window.addEventListener('DOMContentLoaded', checkAndShowPage);
   </script>
-
 </head>
 
 <body>
@@ -249,6 +259,12 @@
       </button>
     </div>
   </header>
+  <div class="video">
+    <video class="background-video" controls autoplay loop playsinline muted>
+      <source src="./video/kurwa.mp4" type="video/mp4" />
+      Ваш браузер не поддерживает видео.
+    </video>
+  </div>
 </body>
 
 </html>
